@@ -1,35 +1,76 @@
 #!/usr/bin/env python3
+import socket
 
 import requests
 from resources import colors
-from bs4 import BeautifulSoup as BS
+from bs4 import BeautifulSoup
 import pprint
 import traceback
 
 # get user requested url
 def curlURL(url):
     # beautify with BS
-    soup = BS(requests.get(url).text, "html.parser")
+    soup = BeautifulSoup(requests.get(url, timeout=3).text, "html.parser")
     return soup
 
+
+def recursiveLinkSearch(soup, url, layer, depth):
+    results = []
+    # for each 'href' found on the page, check if it is a URL
+    for a in soup.find_all(href=True):
+        try:
+            # for every href found, check if contains http or https
+            if any(stringStartsWith in a.get('href')[0:4] for stringStartsWith in ["http", "https", "HTTP", "HTTPS"]) \
+                    and a.get('href') != url and layer < depth:
+
+                print(f"Found URL: {a.get('href')}")
+                print(f"LOG: {colors.yellow}Current Layer: {layer}{colors.end}")
+                results.append(a.get('href'))
+                # BUG: adds an extra "None" type to the end of each list
+                results.append(recursiveLinkSearch(curlURL(a.get('href')), a.get('href'), layer+1, depth))
+        # Exceptions Stack
+        except requests.exceptions.InvalidSchema:
+            print(f"{a.get('href')}")
+            print(f"{colors.bad}Invalid Url Detected{colors.end}")
+        except requests.exceptions.ConnectTimeout:
+            print(f"{a.get('href')}")
+            print(f"{colors.bad}Connection Timeout. Passing...")
+        except requests.exceptions.SSLError:
+            print(f"{a.get('href')}")
+            print(f"{colors.bad}SSL Certificate Error.  Passing...")
+        except requests.exceptions.ReadTimeout:
+            print(f"{a.get('href')}")
+            print(f"{colors.bad}Read Timeout.  Passing...")
+    # exit recursion
+    if results != []:
+        print(f"LOG: {results[-1]}")
+        return results
+
 # get user requested tags
-def requestSearchTags(soup):
+def requestSearchTags(soup, url, layer):
     end = ""
     tags = []
     while end != "END":
         # ask user for classname
-        userTag = input("Enter a class tag (type END when complete): ")
+        userTag = input("Enter a class name, i.e. class='<name>' (type END when complete): ")
 
-        #verify classname exists
         if userTag.upper() == "END":
             # user 'END' case sensitive
             end = "END"
-        elif userTag == "":
+        # not blank, and user did not enter css style classname
+        elif userTag == "" or userTag[0] == ".":
             print(f"{colors.red}{colors.bad}Invalid tag.{colors.end}")
+        # check for href, begin recursive link search
+        elif userTag == "href":
+            depth = int(input("Layers before abort (anything over 2 will likely take 10+ minutes): "))
+            print(f"Finding all anchor HTML links.")
+            tags.append(recursiveLinkSearch(soup, url, layer, depth))
+        # verify classname exists on URL
         elif not soup.select("." + userTag):
             print(f"{colors.red}{colors.bad}Invalid tag.{colors.end}")
         else:
-                tags.append(userTag)
+            # user entered valid tag which is not href
+            retrieveTags(userTag, soup)
 
     return tags
 
@@ -50,9 +91,25 @@ def saveFile(file, filteredHTML, style):
     file.close()
     # CSV or JSON
 
+#TODO: get scrape statistics
+'''
+def getStats():
+    itemsDiscovered = 0
+    for i in searchTags:
+        if isinstance(searchTags[i], list):
+            itemsDiscovered += len(i)
+
+    # print to console
+    print(f"""Stats:
+    {colors.info} Keys searched: {len(searchTags)}
+    {colors.info} Items found: {itemsDiscovered}
+    """)
+'''
+
 # MAIN
 def main():
     url = ""
+    layer = 0
     while True:
         while True:
             try:
@@ -68,22 +125,21 @@ def main():
                 print(f"{colors.red}{colors.bad}Error in URL{colors.end}")
                 url = ""
 
-        searchTags = requestSearchTags(soup)
-        filteredHTML = retrieveTags(searchTags, soup)
-        # filteredHTML = searchTags
+        searchTags = requestSearchTags(soup, url, layer)
 
-        # print to console
         preview = input("Preview data (y/n): ")
         if preview in "yY":
-            pprint.pprint(filteredHTML)
+            pprint.pprint(searchTags)
 
         while True:
-            save = input("Save to file ([W]rite/[A]ppend): ")[0]
+            save = input("Save to file ([W]rite/[A]ppend/No): ")[0]
             if save in "aAwW":
                 saveasfilename = input('Enter filename (directory listing is valid): ')
                 # fileType = input("Filetype (csv or JSON): ")
-                saveFile(saveasfilename, filteredHTML, save)
+                saveFile(saveasfilename, searchTags, save)
                 print(f"{colors.green}{colors.good}Save complete.{colors.end}")
+                break
+            elif save in "noNONo":
                 break
             else:
                 print(f"{colors.red}{colors.bad}Invalid Choice{colors.end}")
