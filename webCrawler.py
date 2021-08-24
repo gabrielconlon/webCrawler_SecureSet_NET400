@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-import socket
 
 import requests
 from resources import colors
 from bs4 import BeautifulSoup
 import pprint
-import traceback
+
 
 # get user requested url
 def curlURL(url):
@@ -25,8 +24,8 @@ def recursiveLinkSearch(soup, url, layer, depth):
 
                 print(f"Found URL: {a.get('href')}")
                 print(f"LOG: {colors.yellow}Current Layer: {layer}{colors.end}")
+                # print(f"{colors.green}Finding all anchor HTML links.{colors.end}")
                 results.append(a.get('href'))
-                # BUG: adds an extra "None" type to the end of each list
                 results.append(recursiveLinkSearch(curlURL(a.get('href')), a.get('href'), layer+1, depth))
         # Exceptions Stack
         except requests.exceptions.InvalidSchema:
@@ -42,14 +41,22 @@ def recursiveLinkSearch(soup, url, layer, depth):
             print(f"{a.get('href')}")
             print(f"{colors.bad}Read Timeout.  Passing...")
     # exit recursion
-    if results != []:
-        print(f"LOG: {results[-1]}")
-        return results
+    # if results != []:
+    # print(f"LOG: {results[-1]}")
+    return results
+
+def deleteNestedEmptyLists(nestedList):
+    for idx, item in enumerate(nestedList):
+        if item == []:
+            nestedList.pop(idx)
+        elif type(item) == list:
+            deleteNestedEmptyLists(item)
+    return nestedList
 
 # get user requested tags
 def requestSearchTags(soup, url, layer):
     end = ""
-    tags = []
+    tags = {}
     while end != "END":
         # ask user for classname
         userTag = input("Enter a class name, i.e. class='<name>' (type END when complete): ")
@@ -62,25 +69,34 @@ def requestSearchTags(soup, url, layer):
             print(f"{colors.red}{colors.bad}Invalid tag.{colors.end}")
         # check for href, begin recursive link search
         elif userTag == "href":
-            depth = int(input("Layers before abort (anything over 2 will likely take 10+ minutes): "))
-            print(f"Finding all anchor HTML links.")
-            tags.append(recursiveLinkSearch(soup, url, layer, depth))
+            depth = int(input("Layers before abort (0 indexed, anything over 2 will likely take 10+ minutes): "))
+            print(f"{colors.green}Finding all anchor HTML links...{colors.end}")
+            tags[userTag] = recursiveLinkSearch(soup, url, layer, depth)
+            # check for "None"s and delete
+            tags[userTag] = deleteNestedEmptyLists(tags[userTag])
+            # for idx, item in enumerate(tags[userTag]):
+            #     if type(item) == list:
+            #         for idx2, i in enumerate(item):
+            #             if i == []:
+            #                 item.pop(idx2)
         # verify classname exists on URL
         elif not soup.select("." + userTag):
             print(f"{colors.red}{colors.bad}Invalid tag.{colors.end}")
         else:
             # user entered valid tag which is not href
-            retrieveTags(userTag, soup)
+            tags[userTag] = retrieveTags(userTag, soup)
 
     return tags
+
 
 # pull data
 def retrieveTags(searchTags, soup):
-    tags = {}
-    for idx, tag in enumerate(searchTags):
-        tags[tag] = soup.select("." + tag)
+    # tags = {}
+    # for idx, tag in enumerate(searchTags):
+        #tags[tag] = soup.select("." + tag)
 
-    return tags
+    return soup.select("." + searchTags)
+
 
 # save
 def saveFile(file, filteredHTML, style):
@@ -91,7 +107,8 @@ def saveFile(file, filteredHTML, style):
     file.close()
     # CSV or JSON
 
-#TODO: get scrape statistics
+
+# TODO: get scrape statistics
 '''
 def getStats():
     itemsDiscovered = 0
@@ -106,11 +123,13 @@ def getStats():
     """)
 '''
 
+
 # MAIN
 def main():
     url = ""
     layer = 0
-    while True:
+    run = True
+    while run:
         while True:
             try:
                 if not url:
